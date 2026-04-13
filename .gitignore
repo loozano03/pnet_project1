@@ -1,0 +1,20 @@
+# Entorno de la IA
+.agents/
+.antigravity/
+.cline/
+.cursor/
+
+# Entornos virtuales de Python
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Logs y resultados locales
+logs/
+*.pcap
+*.log
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
