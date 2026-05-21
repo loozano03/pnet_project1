@@ -1,0 +1,2 @@
+ip address add 20.0.1.100/24 dev eth0
+cd /pox && python3 pox.py openflow.of_01 --port=6653 controller &
