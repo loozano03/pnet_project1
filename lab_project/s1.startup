@@ -16,11 +16,11 @@ tc qdisc add dev eth4 root handle 1: netem delay 0.5ms
 tc qdisc add dev eth4 parent 1: handle 2: tbf rate 100mbit burst 50000 limit 62500
 
 /usr/share/openvswitch/scripts/ovs-ctl --system-id=random start
-ovs-vsctl add-br s1
-ovs-vsctl add-port s1 eth0
-ovs-vsctl add-port s1 eth1
-ovs-vsctl add-port s1 eth2
-ovs-vsctl add-port s1 eth3
-ovs-vsctl add-port s1 eth4
+ovs-vsctl --no-wait --may-exist add-br s1
+ovs-vsctl --no-wait --may-exist add-port s1 eth0
+ovs-vsctl --no-wait --may-exist add-port s1 eth1
+ovs-vsctl --no-wait --may-exist add-port s1 eth2
+ovs-vsctl --no-wait --may-exist add-port s1 eth3
+ovs-vsctl --no-wait --may-exist add-port s1 eth4
 
-ovs-vsctl set-controller s1 tcp:20.0.1.100
+ovs-vsctl --no-wait set-controller s1 tcp:20.0.1.100:6653
