@@ -36,6 +36,19 @@ class Controller(object):
         log.info("Switch conectado: dpid=%s puertos=%s",
                  dpid_to_str(event.dpid),
                  [p.port_no for p in event.ofp.ports])
+        
+
+        #IMPORTANTE
+        #SOL BUGG BROADCAST,
+        #en nuestros  paquetes de send discovery son broadcast y entonces estabamos volviendo a enveiarnos al controlador
+        #en un buclle infinito, que genera lag en la conexion
+
+        # Regla para capturar SOLO los paquetes de discovery (ARP) -> solo al controlador
+        msg = of.ofp_flow_mod()
+        msg.priority = 200
+        msg.match.dl_type = ethernet.ARP_TYPE
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER, max_len=128))
+        event.connection.send(msg)
 
         # regla Table-miss: si el switch no sabe que hacer con un paquete, lo envia al controlador como PacketIn
         msg = of.ofp_flow_mod()
