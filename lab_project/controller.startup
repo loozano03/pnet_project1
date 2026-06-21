@@ -4,4 +4,4 @@
 # - controller: our custom module for worker discovery
 
 ip address add 20.0.1.100/24 dev eth0
-cd /pox && python3 pox.py openflow.of_01 --port=6653 forwarding.l2_learning controller &
+cd /pox && python3 pox.py openflow.of_01 --port=6653 controller &

@@ -40,7 +40,8 @@ class Controller(object):
         # regla Table-miss: si el switch no sabe que hacer con un paquete, lo envia al controlador como PacketIn
         msg = of.ofp_flow_mod()
         msg.priority =0
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER, max_len=128))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
         event.connection.send(msg)
 
         for collector_ip in self.collectors.keys():
@@ -67,7 +68,7 @@ class Controller(object):
         if not packet.parsed:
            return
 
-        # Ignoramos ARP para Worker Discovery.
+        #ignoramos ARP para Worker Discovery.
     
         if packet.type == ethernet.ARP_TYPE:
             return
@@ -84,7 +85,7 @@ class Controller(object):
         dst_ip = str(ip_pkt.dstip)
         dst_port = tcp_pkt.dstport
 
-        # Solo nos interesan flujos TCP hacia collectors conocidos
+        #solo nos interesan flujos TCP hacia collectors conocidos
         if dst_ip not in self.collectors:
             return
 
@@ -96,10 +97,10 @@ class Controller(object):
         worker_number = src_ip.split(".")[-1]
         worker_id = "w%s" % worker_number
 
-        # Identificador único del flujo TCP
-        flow_id = (src_ip, dst_ip, dst_port)
+        #identificador único del worker
+        flow_id = (worker_id, collector)
 
-        # Si ya hemos visto este flujo, no volvemos a registrarlo
+        #si ya hemos visto este flujo, no volvemos a registrarlo
         if flow_id in self.seen_flows:
             return
 
@@ -108,14 +109,14 @@ class Controller(object):
         if worker_id not in self.trainings[collector]:
             self.trainings[collector].add(worker_id)
 
-        log.info(
-            "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
-            worker_id,
-            collector,
-            dst_ip,
-            dst_port,
-            len(self.trainings[collector])
-        )
+            log.info(
+                "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
+                worker_id,
+                collector,
+                dst_ip,
+                dst_port,
+                len(self.trainings[collector])
+            )
 
 #ya que el controlador solo sabe el num de los switches q estan directamente conectados a el y sus puertos conectados
 #tenemos descubrir los dispositivos que tambien forman parte de esta red
