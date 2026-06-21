@@ -7,6 +7,8 @@ import struct
 from pox.lib.packet import arp
 from pox.lib.addresses import IPAddr
 from pox.lib.packet import ipv4, tcp
+from pox.lib.recoco import Timer
+
 
 log = core.getLogger()
 
@@ -30,7 +32,16 @@ class Controller(object):
             "c4":set(),
         }
         self.seen_flows = set()
+
+        self.links = {}
+        Timer(5, self.send_all_discovery, recurring=True)
         log.info("Controller initialized: Worker Discovery enabled")
+    def send_all_discovery(self):
+        for connection in core.openflow.connections:
+            ports = connection.features.ports
+            for port in ports:
+                if port.port_no < 65000:
+                    self.send_discovery_message(connection, port.port_no)
 
     def _handle_ConnectionUp(self, event):
         log.info("Switch conectado: dpid=%s puertos=%s",
@@ -73,8 +84,26 @@ class Controller(object):
 
         #ignoramos ARP para Worker Discovery.
     
+        # Procesar ARP: puede ser discovery (opcode 88) o ARP normal
         if packet.type == ethernet.ARP_TYPE:
+            arp_pkt = packet.payload
+
+            if arp_pkt.opcode == 88:
+                sender_dpid = arp_pkt.protosrc.toUnsigned()
+                sender_port = arp_pkt.protodst.toUnsigned()
+                receiver_dpid = event.dpid
+                receiver_port = event.port
+
+                clave = (sender_dpid, sender_port)
+
+                # Solo loguear si es un enlace nuevo
+                if clave not in self.links:
+                    self.links[clave] = (receiver_dpid, receiver_port)
+                    log.info("Enlace descubierto: %d:%d --> %s:%d",
+                             sender_dpid, sender_port,
+                             dpid_to_str(receiver_dpid), receiver_port)
             return
+
 
         ip_pkt = packet.find('ipv4')
         if ip_pkt is None:
