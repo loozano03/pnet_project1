@@ -44,17 +44,7 @@ class Controller(object):
         msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
         event.connection.send(msg)
 
-        for collector_ip in self.collectors.keys():
-            msg = of.ofp_flow_mod()
-            msg.priority = 100
-            msg.match = of.ofp_match(
-                dl_type=ethernet.IP_TYPE,
-                nw_proto=6,
-                nw_dst=IPAddr(collector_ip)
-            )
-            msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER, max_len=128))
-            msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
-            event.connection.send(msg)
+        
 
         for port in event.ofp.ports:
             if port.port_no < 65000:   # saltar puertos reservados como LOCAL (65534)
@@ -100,7 +90,7 @@ class Controller(object):
         #identificador único del worker
         flow_id = (worker_id, collector)
 
-        #si ya hemos visto este flujo, no volvemos a registrarlo
+        #si ya hemos visto este worker para este collector, no lo registramos otra vez
         if flow_id in self.seen_flows:
             return
 
