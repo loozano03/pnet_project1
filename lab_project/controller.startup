@@ -1,2 +1,7 @@
+# Start POX with:
+# - openflow.of_01: OpenFlow 1.0 listener on port 6653
+# - forwarding.l2_learning: basic L2 forwarding so hosts can communicate
+# - controller: our custom module for worker discovery
+
 ip address add 20.0.1.100/24 dev eth0
-cd /pox && python3 pox.py openflow.of_01 --port=6653 controller &
+cd /pox && python3 pox.py openflow.of_01 --port=6653 forwarding.l2_learning controller &
