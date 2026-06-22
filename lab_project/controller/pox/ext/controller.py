@@ -8,6 +8,7 @@ from pox.lib.packet import arp
 from pox.lib.addresses import IPAddr
 from pox.lib.packet import ipv4, tcp
 from pox.lib.recoco import Timer
+import time
 
 
 log = core.getLogger()
@@ -32,6 +33,13 @@ class Controller(object):
             "c4":set(),
         }
         self.seen_flows = set()
+        self.start_time = None
+        self.training_stats ={
+            "c1": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
+            "c2": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
+            "c3": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
+            "c4": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
+        }
 
         self.links = {}
         Timer(5, self.send_all_discovery, recurring=True)
@@ -248,14 +256,67 @@ class Controller(object):
         #solo nos interesan flujos TCP hacia collectors conocidos
         if dst_ip in self.collectors and src_ip.startswith("10.0.0."):
             collector = self.collectors[dst_ip]
+            now = time.time()
+            if self.start_time is None:
+                self.start_time = now
+            stats = self.training_stats[collector]
+
+            # Detectar inicio de ciclo usando silencio entre ráfagas.
+            # Si pasa más de IDLE_GAP sin ver tráfico de este collector,
+            # y luego vuelve a aparecer, asumimos que empieza una nueva ronda.
+            IDLE_GAP = 15.0
+
+            last_seen = stats["last_packet_seen"]
+
+            if last_seen is None:
+                stats["cycle_times"].append(now)
+
+            elif now - last_seen > IDLE_GAP:
+                stats["cycle_times"].append(now)
+
+                if len(stats["cycle_times"]) >= 2:
+                    tv_est = stats["cycle_times"][-1] - stats["cycle_times"][-2]
+                    stats["tv_estimates"].append(tv_est)
+
+                    log.info(
+                        "Traffic characterization: %s Tv_est=%.2fs",
+                        collector,
+                        tv_est
+                    )
+
+            stats["last_packet_seen"] = now
+            if stats["first_seen"] is None:
+                stats["first_seen"]=now
+                phi_est= now-self.start_time
+                log.info("Traffic characterization: %s phi_est=%.3fs", collector, phi_est)
             worker_number = src_ip.split(".")[-1]
             worker_id="w%s" % worker_number
+            last_worker = stats["last_worker_seen"].get(worker_id)
+
+            if last_worker is None:
+                stats["last_worker_seen"][worker_id] = now
+
+            elif now - last_worker > 20:
+                tv_est = now - last_worker
+                stats["tv_estimates"].append(tv_est)
+
+                log.info(
+                    "Traffic characterization: %s Tv_est=%.2fs worker=%s",
+                    collector,
+                    tv_est,
+                    worker_id
+                )
+
+                # Actualizamos solo cuando creemos que empezó una nueva ronda
+                stats["last_worker_seen"][worker_id] = now
             flow_id =(worker_id, collector)
 
             #si ya hemos visto este worker para este collector, no lo registramos otra vez
             if flow_id not in self.seen_flows:
                 self.seen_flows.add(flow_id)
                 self.trainings[collector].add(worker_id)
+                stats["workers"].add(worker_id)
+                stats["flow_times"].append(now)
 
                 log.info(
                     "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
@@ -264,6 +325,11 @@ class Controller(object):
                     dst_ip,
                     dst_port,
                     len(self.trainings[collector])
+                )
+                log.info(
+                    "Traffic characterization: %s Kv=%d",
+                    collector,
+                    len(stats["workers"])
                 )
         self.flood_arbol(event)
         return
