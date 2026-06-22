@@ -188,7 +188,6 @@ class Controller(object):
         msg = of.ofp_flow_mod()
         msg.priority =0
         msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER, max_len=128))
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_NORMAL))
         event.connection.send(msg)
 
         
@@ -236,7 +235,10 @@ class Controller(object):
             return
 
         tcp_pkt = packet.find('tcp')
+        #si no es TCP, no sirver para Worker Discovery
+        # pero si que queremos reenviarlo por nuestro arbol sin bucles
         if tcp_pkt is None:
+            self.flood_arbol(event)
             return
 
         src_ip = str(ip_pkt.srcip)
@@ -244,37 +246,27 @@ class Controller(object):
         dst_port = tcp_pkt.dstport
 
         #solo nos interesan flujos TCP hacia collectors conocidos
-        if dst_ip not in self.collectors:
-            return
+        if dst_ip in self.collectors and src_ip.startswith("10.0.0."):
+            collector = self.collectors[dst_ip]
+            worker_number = src_ip.split(".")[-1]
+            worker_id="w%s" % worker_number
+            flow_id =(worker_id, collector)
 
-        collector = self.collectors[dst_ip]
+            #si ya hemos visto este worker para este collector, no lo registramos otra vez
+            if flow_id not in self.seen_flows:
+                self.seen_flows.add(flow_id)
+                self.trainings[collector].add(worker_id)
 
-        if not src_ip.startswith("10.0.0."):
-            return
-
-        worker_number = src_ip.split(".")[-1]
-        worker_id = "w%s" % worker_number
-
-        #identificador único del worker
-        flow_id = (worker_id, collector)
-
-        #si ya hemos visto este worker para este collector, no lo registramos otra vez
-        if flow_id in self.seen_flows:
-            return
-
-        self.seen_flows.add(flow_id)
-
-        if worker_id not in self.trainings[collector]:
-            self.trainings[collector].add(worker_id)
-
-            log.info(
-                "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
-                worker_id,
-                collector,
-                dst_ip,
-                dst_port,
-                len(self.trainings[collector])
-            )
+                log.info(
+                    "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
+                    worker_id,
+                    collector,
+                    dst_ip,
+                    dst_port,
+                    len(self.trainings[collector])
+                )
+        self.flood_arbol(event)
+        return
 
 #ya que el controlador solo sabe el num de los switches q estan directamente conectados a el y sus puertos conectados
 #tenemos descubrir los dispositivos que tambien forman parte de esta red
