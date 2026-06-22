@@ -35,7 +35,53 @@ class Controller(object):
 
         self.links = {}
         Timer(5, self.send_all_discovery, recurring=True)
+
+        self.switch_neighbors = {}   # dpid -> set de dpids vecinos
+        self.leaves = set()          # dpids que son leaves
+        self.spines = set()          # dpids que son spines
+        Timer(10, self.classify_switches, recurring=True)
+
         log.info("Controller initialized: Worker Discovery enabled")
+
+
+    def classify_switches(self):
+        # Construir el mapa de vecinos a partir de self.links
+        self.switch_neighbors = {}
+
+        for (sender_dpid, sender_port), (receiver_dpid, receiver_port) in self.links.items():
+            # El receiver_dpid es el dpid completo; el sender es el truncado
+            # Agrupamos por el receiver (que tenemos completo)
+            if receiver_dpid not in self.switch_neighbors:
+                self.switch_neighbors[receiver_dpid] = set()
+            self.switch_neighbors[receiver_dpid].add(sender_dpid)
+
+        # Clasificamos segun numero de vecinos
+        self.leaves = set()
+        self.spines = set()
+
+        for dpid, neighbors in self.switch_neighbors.items():
+            if len(neighbors) >= 3:
+                self.spines.add(dpid)
+            else:
+                self.leaves.add(dpid)
+
+        #hacemos log solo si no se ha repetido para no entrar en un bucle
+        estado_actual = (frozenset(self.spines), frozenset(self.leaves))
+
+        if estado_actual != getattr(self, "_last_classification", None):
+            self._last_classification = estado_actual
+
+            log.info("Clasificacion: %d spines, %d leaves",
+                     len(self.spines), len(self.leaves))
+            for dpid in self.spines:
+                log.info("  SPINE: %s (%d vecinos)",
+                         dpid_to_str(dpid), len(self.switch_neighbors[dpid]))
+            for dpid in self.leaves:
+                log.info("  LEAF:  %s (%d vecinos)",
+                         dpid_to_str(dpid), len(self.switch_neighbors[dpid]))
+            
+        
+
     def send_all_discovery(self):
         for connection in core.openflow.connections:
             ports = connection.features.ports
