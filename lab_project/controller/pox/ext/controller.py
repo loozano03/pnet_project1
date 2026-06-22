@@ -41,7 +41,30 @@ class Controller(object):
         self.spines = set()          # dpids que son spines
         Timer(10, self.classify_switches, recurring=True)
 
+        #mapeo de puetos leaf spine
+        self.dpid_full = {}        # dpid_truncado -> dpid_completo
+        self.leaf_to_spine = {}    # leaf_dpid -> {spine_dpid: puerto}
         log.info("Controller initialized: Worker Discovery enabled")
+
+    def build_leaf_to_spine(self):
+        self.leaf_to_spine = {}
+
+        for (sender_trunc, sender_port), (receiver_dpid, receiver_port) in self.links.items():
+            # Recuperar el dpid completo del emisor
+            sender_dpid = self.dpid_full.get(sender_trunc)
+            if sender_dpid is None:
+                continue
+
+            # Nos interesan solo enlaces leaf a spine
+            if sender_dpid in self.leaves and receiver_dpid in self.spines:
+                if sender_dpid not in self.leaf_to_spine:
+                    self.leaf_to_spine[sender_dpid] = {}
+                self.leaf_to_spine[sender_dpid][receiver_dpid] = sender_port
+        
+        for leaf, spines in self.leaf_to_spine.items():
+            for spine, port in spines.items():
+                log.info("Ruta: leaf %s --puerto %d--> spine %s",
+                         dpid_to_str(leaf), port, dpid_to_str(spine))
 
 
     def classify_switches(self):
@@ -79,6 +102,8 @@ class Controller(object):
             for dpid in self.leaves:
                 log.info("  LEAF:  %s (%d vecinos)",
                          dpid_to_str(dpid), len(self.switch_neighbors[dpid]))
+                
+        self.build_leaf_to_spine()
             
         
 
@@ -93,7 +118,8 @@ class Controller(object):
         log.info("Switch conectado: dpid=%s puertos=%s",
                  dpid_to_str(event.dpid),
                  [p.port_no for p in event.ofp.ports])
-        
+        # enlazamos el dpid truncado a uno completo
+        self.dpid_full[event.dpid & 0xFFFFFFFF] = event.dpid
 
         #IMPORTANTE
         #SOL BUGG BROADCAST,
