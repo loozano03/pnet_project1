@@ -44,10 +44,61 @@ class Controller(object):
         #mapeo de puetos leaf spine
         self.dpid_full = {}        # dpid_truncado -> dpid_completo
         self.leaf_to_spine = {}    # leaf_dpid -> {spine_dpid: puerto}
+
+        self.broadcast_spine = None   # spine elegido como arbol para broadcast
         log.info("Controller initialized: Worker Discovery enabled")
+
+    def flood_arbol(self, event):
+        dpid = event.dpid
+        in_port = event.port
+        dpid_trunc = dpid & 0xFFFFFFFF
+
+        con = core.openflow.getConnection(dpid)
+        if con is None:
+            return
+
+        out_ports = []
+        es_spine = dpid in self.spines
+
+        for port in con.features.ports:
+            p = port.port_no
+            if p >= 65000:
+                continue
+            if p == in_port:
+                continue
+
+            es_uplink = (dpid_trunc, p) in self.links
+
+            if es_spine:
+                # El spine de broadcast reenvia a TODOS sus leaves
+                # (solo actua el spine de broadcast; los demas no deberian recibir)
+                if dpid == self.broadcast_spine:
+                    out_ports.append(p)
+            else:
+                # Es un leaf
+                if not es_uplink:
+                    # puerto de host: incluir
+                    out_ports.append(p)
+                else:
+                    # uplink: solo el que va al spine de broadcast
+                    vecino_dpid = self.links[(dpid_trunc, p)][0]
+                    if vecino_dpid == self.broadcast_spine:
+                        out_ports.append(p)
+
+        log.info("flood_arbol: dpid=%s in_port=%s out_ports=%s es_spine=%s",
+                 dpid_to_str(dpid), in_port, out_ports, es_spine)
+
+        msg = of.ofp_packet_out()
+        msg.data = event.ofp
+        for p in out_ports:
+            msg.actions.append(of.ofp_action_output(port=p))
+        event.connection.send(msg)
 
     def build_leaf_to_spine(self):
         self.leaf_to_spine = {}
+        # Elegir un spine fijo como arbol de broadcast (siempre el mismo)
+        if self.spines and self.broadcast_spine is None:
+            self.broadcast_spine = sorted(self.spines)[0]
 
         for (sender_trunc, sender_port), (receiver_dpid, receiver_port) in self.links.items():
             # Recuperar el dpid completo del emisor
@@ -153,7 +204,7 @@ class Controller(object):
         #log.info("PacketIn received: type=%s dpid=%s port=%s", packet.type, dpid_to_str(event.dpid), event.port)
         if not packet.parsed:
            return
-
+        
         #ignoramos ARP para Worker Discovery.
     
         # Procesar ARP: puede ser discovery (opcode 88) o ARP normal
@@ -174,6 +225,9 @@ class Controller(object):
                     log.info("Enlace descubierto: %d:%d --> %s:%d",
                              sender_dpid, sender_port,
                              dpid_to_str(receiver_dpid), receiver_port)
+                return
+            # ARP normal de un host: inundar de forma controlada (arbol)
+            self.flood_arbol(event)
             return
 
 
