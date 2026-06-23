@@ -334,12 +334,13 @@ class Controller(object):
 
             #si ya hemos visto este worker para este collector, no lo registramos otra vez
             if flow_id not in self.seen_flows:
-                self.seen_flows.add(flow_id)
-                self.trainings[collector].add(worker_id)
-                stats["workers"].add(worker_id)
-                stats["flow_times"].append(now)
+                if self.instalar_ruta(src_ip, dst_ip):
+                    self.seen_flows.add(flow_id)
+                    self.trainings[collector].add(worker_id)
+                    stats["workers"].add(worker_id)
+                    stats["flow_times"].append(now)
 
-                self.instalar_ruta(src_ip, dst_ip)
+                
 
                 log.info(
                     "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
@@ -392,9 +393,9 @@ class Controller(object):
         # comprobamos que sabemos donde esta estan los host
         log.info("instalar_ruta llamada: %s -> %s", worker_ip, collector_ip)
         if worker_ip not in self.host_location:
-            return
+            return False
         if collector_ip not in self.host_location:
-            return
+            return False
 
         worker_leaf, worker_port = self.host_location[worker_ip]
         collector_leaf, collector_port = self.host_location[collector_ip]
@@ -447,6 +448,7 @@ class Controller(object):
 
         log.info("Ruta instalada: %s -> %s via %s",
                  worker_ip, collector_ip, dpid_to_str(spine))
+        return True
         
     def instalar_regla(self, dpid, src_ip, dst_ip, out_port):
         con = core.openflow.getConnection(self.dpid_full.get(dpid & 0xFFFFFFFF, dpid))
