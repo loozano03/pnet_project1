@@ -56,6 +56,10 @@ class Controller(object):
         self.leaf_to_spine = {}    # leaf_dpid -> {spine_dpid: puerto}
 
         self.broadcast_spine = None   # spine elegido como arbol para broadcast
+
+        self.spine_s1 = None  
+        self.spine_s2 = None   
+
         log.info("Controller initialized: Worker Discovery enabled")
 
     def flood_arbol(self, event):
@@ -148,7 +152,13 @@ class Controller(object):
                 self.spines.add(dpid)
             else:
                 self.leaves.add(dpid)
-
+        
+        # asignamos los spine ordenando los dpid
+        if len(self.spines) == 2:
+            spines_ordenados = sorted(self.spines)
+            self.spine_s1 = spines_ordenados[0]
+            self.spine_s2 = spines_ordenados[1]
+        
         #hacemos log solo si no se ha repetido para no entrar en un bucle
         estado_actual = (frozenset(self.spines), frozenset(self.leaves))
 
@@ -329,6 +339,8 @@ class Controller(object):
                 stats["workers"].add(worker_id)
                 stats["flow_times"].append(now)
 
+                self.instalar_ruta(src_ip, dst_ip)
+
                 log.info(
                     "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
                     worker_id,
@@ -375,7 +387,81 @@ class Controller(object):
         msg.data=eth.pack()
         msg.actions.append(of.ofp_action_output(port=port_no))
         connection.send(msg)
+    
+    def instalar_ruta(self, worker_ip, collector_ip):
+        # comprobamos que sabemos donde esta estan los host
+        log.info("instalar_ruta llamada: %s -> %s", worker_ip, collector_ip)
+        if worker_ip not in self.host_location:
+            return
+        if collector_ip not in self.host_location:
+            return
 
+        worker_leaf, worker_port = self.host_location[worker_ip]
+        collector_leaf, collector_port = self.host_location[collector_ip]
+
+        # Elegir spine segun paridad del worker
+        worker_num = int(worker_ip.split(".")[-1])
+        if worker_num % 2 == 1:
+            spine = self.spine_s1   
+        else:
+            spine = self.spine_s2 
+
+        if spine is None:
+            return
+
+        # port del leaf del worker hacia el spine elegido
+        if worker_leaf not in self.leaf_to_spine:
+            return
+        if spine not in self.leaf_to_spine[worker_leaf]:
+            return
+        puerto_worker_a_spine = self.leaf_to_spine[worker_leaf][spine]
+
+        # port leaf del colector hacia el spine elegido
+        if collector_leaf not in self.leaf_to_spine:
+            return
+        if spine not in self.leaf_to_spine[collector_leaf]:
+            return
+        puerto_colector_a_spine = self.leaf_to_spine[collector_leaf][spine]
+
+        # port del spine hacia el leaf del colector
+        #    (buscar en links: del spine, que puerto va al collector_leaf)
+        puerto_spine_a_colector = None
+        spine_trunc = spine & 0xFFFFFFFF
+        for (d, p), (vecino, vp) in self.links.items():
+            if d == spine_trunc and vecino == collector_leaf:
+                puerto_spine_a_colector = p
+                break
+        if puerto_spine_a_colector is None:
+            return
+
+        # --- INSTALAR REGLAS DE IDA (worker -> colector) ---
+
+        # Regla en el leaf del worker: hacia el colector -> salir por el uplink al spine
+        self.instalar_regla(worker_leaf, worker_ip, collector_ip, puerto_worker_a_spine)
+
+        # Regla en el spine: hacia el colector -> bajar al leaf del colector
+        self.instalar_regla(spine, worker_ip, collector_ip, puerto_spine_a_colector)
+
+        # Regla en el leaf del colector: hacia el colector -> salir por el puerto del colector
+        self.instalar_regla(collector_leaf, worker_ip, collector_ip, collector_port)
+
+        log.info("Ruta instalada: %s -> %s via %s",
+                 worker_ip, collector_ip, dpid_to_str(spine))
+        
+    def instalar_regla(self, dpid, src_ip, dst_ip, out_port):
+        con = core.openflow.getConnection(self.dpid_full.get(dpid & 0xFFFFFFFF, dpid))
+        # Si dpid ya es completo, getConnection lo acepta directo
+        con = core.openflow.getConnection(dpid)
+        if con is None:
+            return
+
+        msg = of.ofp_flow_mod()
+        msg.priority = 300
+        msg.match.dl_type = 0x0800
+        msg.match.nw_src = IPAddr(src_ip)
+        msg.match.nw_dst = IPAddr(dst_ip)
+        msg.actions.append(of.ofp_action_output(port=out_port))
+        con.send(msg)
 
 def launch():
     core.registerNew(Controller)
