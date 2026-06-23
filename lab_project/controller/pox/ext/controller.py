@@ -41,6 +41,8 @@ class Controller(object):
             "c4": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
         }
 
+        self.host_location = {}   # ip(leaf_dpid, puerto)
+
         self.links = {}
         Timer(5, self.send_all_discovery, recurring=True)
 
@@ -242,6 +244,15 @@ class Controller(object):
         if ip_pkt is None:
             return
 
+        # Aprender ubicacionde worker y host origen (si entro por puerto de acceso, no uplink)
+        src_ip_full = str(ip_pkt.srcip)
+        dpid_trunc = event.dpid & 0xFFFFFFFF
+        es_uplink = (dpid_trunc, event.port) in self.links
+        if not es_uplink and src_ip_full not in self.host_location:
+            self.host_location[src_ip_full] = (event.dpid, event.port)
+            log.info("Host localizado: %s en leaf %s puerto %d",
+                     src_ip_full, dpid_to_str(event.dpid), event.port)
+        
         tcp_pkt = packet.find('tcp')
         #si no es TCP, no sirver para Worker Discovery
         # pero si que queremos reenviarlo por nuestro arbol sin bucles
