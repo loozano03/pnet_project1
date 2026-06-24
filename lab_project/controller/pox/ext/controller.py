@@ -342,19 +342,19 @@ class Controller(object):
 
                 
 
-                log.info(
-                    "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
-                    worker_id,
-                    collector,
-                    dst_ip,
-                    dst_port,
-                    len(self.trainings[collector])
-                )
-                log.info(
-                    "Traffic characterization: %s Kv=%d",
-                    collector,
-                    len(stats["workers"])
-                )
+                    log.info(
+                        "Worker discovered from TCP flow: %s -> %s (%s:%s) | Kv=%d",
+                        worker_id,
+                        collector,
+                        dst_ip,
+                        dst_port,
+                        len(self.trainings[collector])
+                    )
+                    log.info(
+                        "Traffic characterization: %s Kv=%d",
+                        collector,
+                        len(stats["workers"])
+                    )
         self.flood_arbol(event)
         return
 
