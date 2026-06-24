@@ -33,6 +33,9 @@ class Controller(object):
             "c4":set(),
         }
         self.seen_flows = set()
+        self.flow_byte_counts = {}
+        self.flow_stable_counts = {}
+        self.dv_logged = set()
         self.start_time = None
         self.training_stats ={
             "c1": {"first_seen":None, "flow_times": [], "workers":set(), "cycle_times":[], "last_packet_seen": None, "tv_estimates": [], "last_worker_seen": {}},
@@ -61,6 +64,8 @@ class Controller(object):
         self.spine_s2 = None   
 
         log.info("Controller initialized: Worker Discovery enabled")
+
+        Timer(10, self.request_flow_stats, recurring=True)
 
     def flood_arbol(self, event):
         dpid = event.dpid
@@ -465,5 +470,54 @@ class Controller(object):
         msg.actions.append(of.ofp_action_output(port=out_port))
         con.send(msg)
 
+    def request_flow_stats(self):
+        for con in core.openflow.connections:
+            req = of.ofp_stats_request(body=of.ofp_flow_stats_request())
+            con.send(req)
+
+
+    def _handle_FlowStatsReceived(self, event):
+        for f in event.stats:
+            if f.priority == 300 and f.match.nw_src is not None and f.match.nw_dst is not None:
+                src_ip = str(f.match.nw_src)
+                dst_ip = str(f.match.nw_dst)
+
+                if dst_ip in self.collectors:
+                    # Una sola entrada por flujo worker -> collector
+                    flow_key = (src_ip, dst_ip)
+
+                    current_bytes = f.byte_count
+                    previous_bytes = self.flow_byte_counts.get(flow_key)
+
+                    self.flow_byte_counts[flow_key] = current_bytes
+
+                    if previous_bytes is None:
+                        continue
+
+                    delta_bytes = current_bytes - previous_bytes
+
+                    # Si el contador no aumenta, asumimos que el flujo ya se ha estabilizado/parado
+                    if delta_bytes == 0:
+                        self.flow_stable_counts[flow_key] = self.flow_stable_counts.get(flow_key, 0) + 1
+                    else:
+                        self.flow_stable_counts[flow_key] = 0
+
+                    # Cuando lleva 2 consultas sin crecer, estimamos Dv usando el total acumulado
+                    if self.flow_stable_counts.get(flow_key, 0) >= 2 and flow_key not in self.dv_logged:
+                        dv_est = current_bytes * 8.0 / 1e6
+
+                        # Evita falsos positivos iniciales demasiado pequeños
+                        if dv_est < 40:
+                            continue
+
+                        self.dv_logged.add(flow_key)
+
+                        log.info(
+                            "Traffic characterization: %s Dv_est=%.2f Mbits flow=%s->%s",
+                            self.collectors[dst_ip],
+                            dv_est,
+                            src_ip,
+                            dst_ip
+                        )
 def launch():
     core.registerNew(Controller)
