@@ -34,7 +34,10 @@ class Controller(object):
         }
         self.seen_flows = set()
         self.flow_byte_counts = {}
+        self.flow_active = {}
+        self.flow_round_start = {}
         self.flow_stable_counts = {}
+        self.flow_stats_source = {}
         self.dv_logged = set()
         self.start_time = None
         self.training_stats ={
@@ -65,7 +68,7 @@ class Controller(object):
 
         log.info("Controller initialized: Worker Discovery enabled")
 
-        Timer(10, self.request_flow_stats, recurring=True)
+        Timer(2, self.request_flow_stats, recurring=True)
 
     def flood_arbol(self, event):
         dpid = event.dpid
@@ -482,42 +485,58 @@ class Controller(object):
                 src_ip = str(f.match.nw_src)
                 dst_ip = str(f.match.nw_dst)
 
-                if dst_ip in self.collectors:
-                    # Una sola entrada por flujo worker -> collector
-                    flow_key = (src_ip, dst_ip)
+                if dst_ip not in self.collectors:
+                    continue
 
-                    current_bytes = f.byte_count
-                    previous_bytes = self.flow_byte_counts.get(flow_key)
+                flow_key = (src_ip, dst_ip)
 
-                    self.flow_byte_counts[flow_key] = current_bytes
+                # Elegimos solo un switch como fuente de estadísticas para este flujo
+                # para no contar el mismo flujo varias veces.
+                if flow_key not in self.flow_stats_source:
+                    self.flow_stats_source[flow_key] = event.dpid
 
-                    if previous_bytes is None:
-                        continue
+                if self.flow_stats_source[flow_key] != event.dpid:
+                    continue
 
-                    delta_bytes = current_bytes - previous_bytes
+                current_bytes = f.byte_count
+                previous_bytes = self.flow_byte_counts.get(flow_key)
 
-                    # Si el contador no aumenta, asumimos que el flujo ya se ha estabilizado/parado
-                    if delta_bytes == 0:
+                self.flow_byte_counts[flow_key] = current_bytes
+
+                if previous_bytes is None:
+                    continue
+
+                delta_bytes = current_bytes - previous_bytes
+
+                # Si el contador aumenta, el flujo/ronda está activo
+                if delta_bytes > 0:
+                    if not self.flow_active.get(flow_key, False):
+                        self.flow_active[flow_key] = True
+                        self.flow_round_start[flow_key] = previous_bytes
+
+                    self.flow_stable_counts[flow_key] = 0
+
+                # Si no aumenta, puede haber terminado la ronda
+                else:
+                    if self.flow_active.get(flow_key, False):
                         self.flow_stable_counts[flow_key] = self.flow_stable_counts.get(flow_key, 0) + 1
-                    else:
-                        self.flow_stable_counts[flow_key] = 0
 
-                    # Cuando lleva 2 consultas sin crecer, estimamos Dv usando el total acumulado
-                    if self.flow_stable_counts.get(flow_key, 0) >= 2 and flow_key not in self.dv_logged:
-                        dv_est = current_bytes * 8.0 / 1e6
+                        # Esperamos 2 consultas sin crecer para confirmar que terminó
+                        if self.flow_stable_counts[flow_key] >= 2:
+                            start_bytes = self.flow_round_start.get(flow_key, previous_bytes)
+                            round_bytes = current_bytes - start_bytes
+                            dv_est = round_bytes * 8.0 / 1e6
 
-                        # Evita falsos positivos iniciales demasiado pequeños
-                        if dv_est < 40:
-                            continue
+                            if dv_est >= 1:
+                                log.info(
+                                    "Traffic characterization: %s Dv_est=%.2f Mbits flow=%s->%s",
+                                    self.collectors[dst_ip],
+                                    dv_est,
+                                    src_ip,
+                                    dst_ip
+                                )
 
-                        self.dv_logged.add(flow_key)
-
-                        log.info(
-                            "Traffic characterization: %s Dv_est=%.2f Mbits flow=%s->%s",
-                            self.collectors[dst_ip],
-                            dv_est,
-                            src_ip,
-                            dst_ip
-                        )
+                            self.flow_active[flow_key] = False
+                            self.flow_stable_counts[flow_key] = 0
 def launch():
     core.registerNew(Controller)
