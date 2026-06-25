@@ -36,6 +36,7 @@ class Controller(object):
         self.flow_byte_counts = {}
         self.flow_active = {}
         self.flow_round_start = {}
+        self.flow_last_round_time = {}
         self.flow_stable_counts = {}
         self.flow_stats_source = {}
         self.dv_logged = set()
@@ -510,6 +511,29 @@ class Controller(object):
 
                 # Si el contador aumenta, el flujo/ronda está activo
                 if delta_bytes > 0:
+                    collector = self.collectors[dst_ip]
+                    stats = self.training_stats[collector]
+                    worker_id = "w%s" % src_ip.split(".")[-1]
+                    now = time.time()
+
+                    last_worker = stats["last_worker_seen"].get(worker_id)
+
+                    if last_worker is not None and now - last_worker > 20:
+                        tv_est = now - last_worker
+                        stats["tv_estimates"].append(tv_est)
+
+                        log.info(
+                            "Traffic characterization: %s Tv_est=%.2fs worker=%s",
+                            collector,
+                            tv_est,
+                            worker_id
+                        )
+
+                        stats["last_worker_seen"][worker_id] = now
+
+                    elif last_worker is None:
+                        stats["last_worker_seen"][worker_id] = now
+
                     if not self.flow_active.get(flow_key, False):
                         self.flow_active[flow_key] = True
                         self.flow_round_start[flow_key] = previous_bytes
